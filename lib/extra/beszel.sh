@@ -620,7 +620,7 @@ _beszel_finish_auto_install() {
 # Настраивает правила в уже активном UFW. Не устанавливает и не включает
 # firewall и не меняет его политики по умолчанию.
 # Вызов: _beszel_setup_firewall standalone — открыть только веб-порты Beszel.
-#         _beszel_setup_firewall --agent-node 45876 IP... — разрешить SSH-агента только с IP Hub.
+#         _beszel_setup_firewall --agent-node 45876 IP... — разрешить Agent только с IP Hub.
 _beszel_setup_firewall() {
     local _with_http=true _mode=standalone
     if [ "${1:-}" = "--agent-node" ]; then
@@ -633,14 +633,12 @@ _beszel_setup_firewall() {
         command -v ufw >/dev/null 2>&1 || return 2
         [ "$(ufw status 2>/dev/null | sed -n '1p')" = "Status: active" ] || return 2
 
-        # Убираем старые правила Beszel для этого порта, затем ставим запрет
-        # для всех источников и исключения для адресов Hub перед ним.
-        beszel_ufw_remove_open_tcp_rules_by_comment "Beszel Agent" "$_agent_port" || return 1
+        # Убираем правила этой и предыдущих версий, затем добавляем разрешения от IP Hub.
+        beszel_ufw_remove_rules_by_comment "BESZEL" "$_agent_port" || return 1
         beszel_ufw_remove_rules_by_comment "Beszel Agent" "$_agent_port" || return 1
-        beszel_ufw_deny_tcp "$_agent_port" "Beszel Agent deny" || return 1
         local _ip
         for _ip in "${_hub_ips[@]}"; do
-            beszel_ufw_allow_tcp_from "$_agent_port" "$_ip" "Beszel Agent from Hub" || return 1
+            beszel_ufw_allow_tcp_from "$_agent_port" "$_ip" "BESZEL" || return 1
         done
         return 0
     else
@@ -2341,6 +2339,7 @@ uninstall_beszel_agent() {
         return 1
     fi
 
+    beszel_ufw_remove_rules_by_comment "BESZEL" "$AGENT_PORT_STORED" || true
     beszel_ufw_remove_rules_by_comment "Beszel Agent" "$AGENT_PORT_STORED" || true
 
     rm -rf "${DIR_BESZEL_AGENT}"

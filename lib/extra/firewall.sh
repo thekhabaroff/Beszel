@@ -27,20 +27,12 @@ beszel_ufw_allow_tcp() {
 }
 
 beszel_ufw_allow_tcp_from() {
-    local port="${1:-}" source_ip="${2:-}" comment="${3:-Beszel Agent}"
+    local port="${1:-}" source_ip="${2:-}" comment="${3:-BESZEL}"
     [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || return 1
     [ -n "$source_ip" ] || return 1
     command -v ufw >/dev/null 2>&1 || return 2
     [ "$(ufw status 2>/dev/null | sed -n '1p')" = "Status: active" ] || return 2
     ufw insert 1 allow from "$source_ip" to any port "$port" proto tcp comment "$comment" >/dev/null 2>&1
-}
-
-beszel_ufw_deny_tcp() {
-    local port="${1:-}" comment="${2:-Beszel Agent deny}"
-    [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || return 1
-    command -v ufw >/dev/null 2>&1 || return 2
-    [ "$(ufw status 2>/dev/null | sed -n '1p')" = "Status: active" ] || return 2
-    ufw insert 1 deny "${port}/tcp" comment "$comment" >/dev/null 2>&1
 }
 
 beszel_ufw_remove_rules_by_comment() {
