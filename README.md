@@ -16,10 +16,10 @@
 Выполните от `root` после публикации репозитория:
 
 ```sh
-bash -o pipefail -c 'mkdir -p /opt/beszel && curl -fsSL https://github.com/thekhabaroff/Beszel/archive/refs/heads/main.tar.gz | tar -xz --strip-components=1 -C /opt/beszel && ln -sfn /opt/beszel/bin/beszel /usr/local/bin/beszel && /usr/local/bin/beszel --help'
+bash -o pipefail -c 'mkdir -p /opt/beszel && curl -fsSL https://github.com/thekhabaroff/Beszel/archive/refs/heads/master.tar.gz | tar -xz --strip-components=1 -C /opt/beszel && ln -sfn /opt/beszel/bin/beszel /usr/local/bin/beszel && /usr/local/bin/beszel --help'
 ```
 
-Команда скачает архив ветки `main`, установит файлы в `/opt/beszel`, добавит `beszel` в `PATH` и выведет справку.
+Команда скачает архив ветки `master`, установит файлы в `/opt/beszel`, добавит `beszel` в `PATH` и выведет справку.
 
 ### Вручную
 
