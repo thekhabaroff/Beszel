@@ -48,6 +48,21 @@ _beszel_normalize_hub_url() {
     printf '%s://%s%s\n' "$scheme" "$host" "$port"
 }
 
+_beszel_resolve_hub_ips() {
+    local hub_url="${1:-}" normalized host
+    normalized=$(_beszel_normalize_hub_url "$hub_url") || return 1
+    host="${normalized#*://}"
+    host="${host%%:*}"
+
+    if [[ "$host" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        printf '%s\n' "$host"
+        return 0
+    fi
+
+    command -v getent >/dev/null 2>&1 || return 1
+    getent ahosts "$host" 2>/dev/null | awk 'NF && $1 ~ /^[0-9A-Fa-f:.]+$/ { print $1 }' | sort -u
+}
+
 _beszel_generate_self_signed_cert() {
     local host="${1:-}" output_dir="${2:-}" cfg rc
     _beszel_valid_host "$host" || return 1
@@ -185,8 +200,8 @@ _beszel_update_agent_hub_url() {
 }
 
 _beszel_write_agent_compose() {
-    local port="${1:-}" key="${2:-}" token="${3:-}" hub_url="${4:-}" system_name="${5:-}"
-    local key_value token_value url_value name_line saved_umask rc compose_tmp
+    local port="${1:-}" key="${2:-}" token="${3:-}" hub_url="${4:-}" system_name="${5:-}" disable_ssh="${6:-false}"
+    local key_value token_value url_value name_line disable_ssh_line saved_umask rc compose_tmp
     [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || return 1
     [ -n "$key" ] && [ -n "$token" ] || return 1
     hub_url=$(_beszel_normalize_hub_url "$hub_url") || return 1
@@ -196,6 +211,10 @@ _beszel_write_agent_compose() {
     name_line=""
     if [ -n "$system_name" ]; then
         name_line="      SYSTEM_NAME: $(_beszel_yaml_quote "$system_name")"
+    fi
+    disable_ssh_line=""
+    if [ "$disable_ssh" = "true" ]; then
+        disable_ssh_line='      DISABLE_SSH: "true"'
     fi
 
     saved_umask=$(umask)
@@ -235,6 +254,7 @@ services:
       TOKEN: ${token_value}
       HUB_URL: ${url_value}
 ${name_line}
+${disable_ssh_line}
     healthcheck:
       test: ["CMD", "/agent", "health"]
       interval: 15s
@@ -597,15 +617,32 @@ _beszel_finish_auto_install() {
     return 1
 }
 
-# Добавляет только недостающие правила в уже активный UFW. Не устанавливает
-# и не включает firewall и не меняет его политики по умолчанию.
-# Вызов: _beszel_setup_firewall standalone 45876 — автономный Nginx и порт агента.
-#         _beszel_setup_firewall --agent-node 45876 — только порт агента.
+# Настраивает правила в уже активном UFW. Не устанавливает и не включает
+# firewall и не меняет его политики по умолчанию.
+# Вызов: _beszel_setup_firewall standalone — открыть только веб-порты Beszel.
+#         _beszel_setup_firewall --agent-node 45876 IP... — разрешить SSH-агента только с IP Hub.
 _beszel_setup_firewall() {
     local _with_http=true _mode=standalone
     if [ "${1:-}" = "--agent-node" ]; then
-        _with_http=false
         shift
+        local _agent_port="${1:-}"
+        shift || true
+        local -a _hub_ips=("$@")
+        [[ "$_agent_port" =~ ^[0-9]+$ ]] && [ "$_agent_port" -ge 1 ] && [ "$_agent_port" -le 65535 ] || return 1
+        [ "${#_hub_ips[@]}" -gt 0 ] || return 1
+        command -v ufw >/dev/null 2>&1 || return 2
+        [ "$(ufw status 2>/dev/null | sed -n '1p')" = "Status: active" ] || return 2
+
+        # Убираем старые правила Beszel для этого порта, затем ставим запрет
+        # для всех источников и исключения для адресов Hub перед ним.
+        beszel_ufw_remove_open_tcp_rules_by_comment "Beszel Agent" "$_agent_port" || return 1
+        beszel_ufw_remove_rules_by_comment "Beszel Agent" "$_agent_port" || return 1
+        beszel_ufw_deny_tcp "$_agent_port" "Beszel Agent deny" || return 1
+        local _ip
+        for _ip in "${_hub_ips[@]}"; do
+            beszel_ufw_allow_tcp_from "$_agent_port" "$_ip" "Beszel Agent from Hub" || return 1
+        done
+        return 0
     else
         _mode="${1:-standalone}"
         shift || true
@@ -615,6 +652,10 @@ _beszel_setup_firewall() {
     command -v ufw >/dev/null 2>&1 || return 0
     _ufw_status=$(ufw status 2>/dev/null | sed -n '1p')
     [ "$_ufw_status" = "Status: active" ] || return 0
+
+    # Локальный Agent на Hub работает через WebSocket и не нуждается в
+    # глобально открытом SSH-порту, который создавали старые версии.
+    beszel_ufw_remove_open_tcp_rules_by_comment "Beszel Agent" 45876 || return 1
 
     if [ "$_with_http" = true ] && [ "$_mode" = "standalone" ]; then
         beszel_ufw_allow_tcp 80 "Beszel Web" || return 1
@@ -681,8 +722,8 @@ _beszel_auto_install_agent() {
         return 1
     fi
 
-    # 6. Запускаем агент (порт агента добавляется только в уже активный UFW).
-    if ! _beszel_write_agent_compose "$AGENT_PORT" "$BESZEL_KEY" "$UNIVERSAL_TOKEN" "$HUB_URL" "Beszel" || \
+    # 6. Запускаем локальный агент только через WebSocket, без SSH listener.
+    if ! _beszel_write_agent_compose "$AGENT_PORT" "$BESZEL_KEY" "$UNIVERSAL_TOKEN" "$HUB_URL" "Beszel" true || \
        ! (cd "${DIR_BESZEL_AGENT}" && docker compose up -d >/dev/null 2>&1); then
         _beszel_finish_auto_install "$HUB_URL" "$ADMIN_EMAIL" "$ADMIN_PASS" "$RECOVERY_FILE" || true
         return 1
@@ -868,6 +909,94 @@ _beszel_do_update() {
     return 1
 }
 
+_beszel_update_script_from_github() {
+    local repo_dir="${SCRIPT_DIR:-}" remote_url="" temp_dir="" source_dir="" backup_dir="" parent_dir="" base_name=""
+    [ -n "$repo_dir" ] && [ -d "$repo_dir" ] || return 1
+
+    if [ -e "${repo_dir}/.git" ]; then
+        command -v git >/dev/null 2>&1 || return 1
+        remote_url=$(git -C "$repo_dir" remote get-url origin 2>/dev/null) || return 1
+        remote_url="${remote_url%/}"
+        remote_url="${remote_url%.git}"
+        case "$remote_url" in
+            https://github.com/thekhabaroff/Beszel|git@github.com:thekhabaroff/Beszel|ssh://git@github.com/thekhabaroff/Beszel) ;;
+            *) return 1 ;;
+        esac
+        git -C "$repo_dir" pull --ff-only origin master >/dev/null 2>&1 || return 1
+        [ -f "${repo_dir}/beszel.sh" ] && [ -f "${repo_dir}/bin/beszel" ] || return 1
+        chmod +x "${repo_dir}/beszel.sh" "${repo_dir}/bin/beszel" || return 1
+        return 0
+    fi
+
+    command -v curl >/dev/null 2>&1 && command -v tar >/dev/null 2>&1 || return 1
+    parent_dir=$(dirname "$repo_dir")
+    base_name=$(basename "$repo_dir")
+    temp_dir=$(mktemp -d "${parent_dir}/.${base_name}.update.XXXXXX") || return 1
+    source_dir="${temp_dir}/source"
+    mkdir -p "$source_dir" || { rm -rf "$temp_dir"; return 1; }
+
+    if ! curl -fsSL --retry 2 --connect-timeout 10 --max-time 180 \
+        "https://github.com/thekhabaroff/Beszel/archive/refs/heads/master.tar.gz" \
+        -o "${temp_dir}/source.tar.gz" || \
+       ! tar -xzf "${temp_dir}/source.tar.gz" --strip-components=1 -C "$source_dir" || \
+       [ ! -f "${source_dir}/beszel.sh" ] || [ ! -f "${source_dir}/bin/beszel" ] || \
+       [ ! -d "${source_dir}/lib" ]; then
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    cp -an "${repo_dir}/." "$source_dir/" || {
+        rm -rf "$temp_dir"
+        return 1
+    }
+    chmod +x "${source_dir}/beszel.sh" "${source_dir}/bin/beszel" || {
+        rm -rf "$temp_dir"
+        return 1
+    }
+
+    backup_dir=$(mktemp -d "${parent_dir}/.${base_name}.backup.XXXXXX") || {
+        rm -rf "$temp_dir"
+        return 1
+    }
+    rmdir "$backup_dir" || {
+        rm -rf "$temp_dir" "$backup_dir"
+        return 1
+    }
+    trap 'if [ -d "$backup_dir" ]; then rm -rf "$repo_dir"; mv "$backup_dir" "$repo_dir" || true; fi; rm -rf "$temp_dir"; exit 130' INT TERM HUP
+    if ! mv "$repo_dir" "$backup_dir"; then
+        trap - INT TERM HUP
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    if ! mv "$source_dir" "$repo_dir"; then
+        mv "$backup_dir" "$repo_dir" || true
+        trap - INT TERM HUP
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
+    trap - INT TERM HUP
+    rm -rf "$backup_dir" "$temp_dir"
+    return 0
+}
+
+_beszel_do_script_update() {
+    show_screen_header "🔂 Обновление скрипта Beszel" "$BLUE"
+    (
+        _beszel_update_script_from_github
+    ) </dev/null &
+    if show_spinner --step "Загрузка изменений с GitHub"; then
+        echo
+        print_success "Скрипт Beszel обновлён. Перезапускаю меню."
+        sleep 1
+        exec "${SCRIPT_DIR}/bin/beszel"
+    fi
+
+    echo
+    print_error "Не удалось обновить скрипт Beszel. Проверьте подключение к GitHub и локальные изменения."
+    show_continue_prompt "Назад" || true
+    return 1
+}
+
 manage_beszel() {
     while true; do
         local -a items=()
@@ -895,9 +1024,13 @@ manage_beszel() {
             local update_label=""
             if update_label=$(_beszel_component_update_label beszel "Beszel"); then
                 items+=("$update_label"); actions+=("update")
-                items+=("──────────────────────────────────────"); actions+=("sep")
             fi
+            items+=("🔂  Обновить скрипт"); actions+=("update_script")
+            items+=("──────────────────────────────────────"); actions+=("sep")
             items+=("🗑️   Удалить"); actions+=("delete")
+        else
+            items+=("──────────────────────────────────────"); actions+=("sep")
+            items+=("🔂  Обновить скрипт"); actions+=("update_script")
         fi
 
         items+=("──────────────────────────────────────"); actions+=("sep")
@@ -918,6 +1051,7 @@ manage_beszel() {
                 _beszel_do_update
                 _beszel_clear_component_update_entry beszel
                 ;;
+            update_script) _beszel_do_script_update ;;
             delete)            manage_delete_components beszel ;;
             *) return 0 ;;
         esac
@@ -1330,7 +1464,7 @@ NGINX
             BESZEL_BLOCK=$(_beszel_external_block "$BESZEL_PROXY_MODE" "$BESZEL_DOMAIN") || exit 1
         fi
 
-        if ! _beszel_setup_firewall "$BESZEL_PROXY_MODE" 45876; then
+        if ! _beszel_setup_firewall "$BESZEL_PROXY_MODE"; then
             printf 'firewall' > "$_bz_prep_err"
             exit 1
         fi
@@ -2103,6 +2237,17 @@ install_beszel_agent() {
         return 1
     }
 
+    local -a BESZEL_HUB_IPS=()
+    mapfile -t BESZEL_HUB_IPS < <(_beszel_resolve_hub_ips "$BESZEL_HUB_URL")
+    if [ "${#BESZEL_HUB_IPS[@]}" -eq 0 ]; then
+        print_error "Не удалось получить IP панели из адреса ${BESZEL_HUB_URL}. Проверьте DNS и повторите установку."
+        show_continue_prompt || true
+        return 1
+    fi
+    echo
+    echo -e "${DARKGRAY}IP панели для правила входящего доступа: ${BESZEL_HUB_IPS[*]}${NC}"
+    echo -e "${DARKGRAY}Домен должен указывать напрямую на сервер Hub, без CDN или прокси.${NC}"
+
     echo
     echo
 
@@ -2123,10 +2268,15 @@ install_beszel_agent() {
     echo
 
     # ─── Правило для агента — только если UFW уже активен ───
-    if ! _beszel_setup_firewall --agent-node "${BESZEL_AGENT_PORT}"; then
+    local FIREWALL_RC=0
+    _beszel_setup_firewall --agent-node "${BESZEL_AGENT_PORT}" "${BESZEL_HUB_IPS[@]}" || FIREWALL_RC=$?
+    if [ "$FIREWALL_RC" -ne 0 ]; then
         KEEP_CURSOR_HIDDEN=
         trap - RETURN
-        print_error "Не удалось добавить правило агента в активный UFW."
+        case "$FIREWALL_RC" in
+            2) print_error "UFW не активен. Включите UFW с сохранённым доступом по SSH и повторите установку Agent." ;;
+            *) print_error "Не удалось безопасно ограничить порт агента правилами UFW." ;;
+        esac
         show_continue_prompt || true
         return 1
     fi

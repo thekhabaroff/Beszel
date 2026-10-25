@@ -7,6 +7,7 @@
 - установка Hub и подключение Agent к Hub;
 - настройка домена и обратного прокси-сервера (reverse proxy);
 - просмотр состояния, журналов и обновлений компонентов;
+- обновление образов Beszel и самого скрипта из GitHub;
 - запуск, остановка, перезапуск, обновление и удаление Hub или Agent.
 
 ## Установка
@@ -16,10 +17,10 @@
 Выполните от `root` после публикации репозитория:
 
 ```sh
-bash -o pipefail -c 'mkdir -p /opt/beszel && curl -fsSL https://github.com/thekhabaroff/Beszel/archive/refs/heads/main.tar.gz | tar -xz --strip-components=1 -C /opt/beszel && ln -sfn /opt/beszel/bin/beszel /usr/local/bin/beszel && /usr/local/bin/beszel --help'
+bash -o pipefail -c 'mkdir -p /opt/beszel && curl -fsSL https://github.com/thekhabaroff/Beszel/archive/refs/heads/master.tar.gz | tar -xz --strip-components=1 -C /opt/beszel && chmod +x /opt/beszel/bin/beszel /opt/beszel/beszel.sh && ln -sfn /opt/beszel/bin/beszel /usr/local/bin/beszel && /usr/local/bin/beszel --help'
 ```
 
-Команда скачает архив ветки `main`, установит файлы в `/opt/beszel`, добавит `beszel` в `PATH` и выведет справку.
+Команда скачает архив ветки `master`, установит файлы в `/opt/beszel`, задаст права на запуск лаунчера и основного скрипта, добавит `beszel` в `PATH` и выведет справку.
 
 ### Вручную
 
@@ -27,6 +28,7 @@ bash -o pipefail -c 'mkdir -p /opt/beszel && curl -fsSL https://github.com/thekh
 
 ```sh
 git clone https://github.com/thekhabaroff/Beszel.git /opt/beszel
+chmod +x /opt/beszel/bin/beszel /opt/beszel/beszel.sh
 ln -s /opt/beszel/bin/beszel /usr/local/bin/beszel
 beszel --help
 ```
@@ -81,12 +83,14 @@ status  install  start  stop  restart  update  logs  remove
 
 - Hub слушает `127.0.0.1:8090`. Для доступа из интернета выбранный reverse proxy направляет HTTPS-запросы на Hub.
 - Agent использует сетевой режим хоста и подключает Docker socket и системный D-Bus, чтобы передавать сведения о контейнерах и службах systemd.
-- Доступ к Docker socket даёт процессу Agent широкие права управления Docker на сервере. Флаг монтирования `:ro` не ограничивает команды, отправляемые через Docker API. Устанавливайте Agent только на доверенные серверы и ограничивайте доступ к его порту адресами Hub и правилами межсетевого экрана.
-- Если UFW уже включён, скрипт добавляет необходимые правила Beszel. Он не устанавливает и не включает UFW и не меняет его политики по умолчанию.
+- Доступ к Docker socket даёт процессу Agent широкие права управления Docker на сервере. Флаг монтирования `:ro` не ограничивает команды, отправляемые через Docker API. Устанавливайте Agent только на доверенные серверы.
+- При установке отдельного Agent скрипт получает IP-адреса из домена Hub и на активном UFW разрешает TCP-порт Agent только с этих адресов, добавляя запрет для остальных источников. Поэтому домен Hub должен указывать напрямую на сервер Hub; CDN или DNS-прокси могут вернуть адреса, с которых Hub фактически не подключается. При смене IP Hub обновите правила UFW.
+- UFW должен быть включён до установки отдельного Agent. Скрипт не устанавливает и не включает UFW и не меняет его политики по умолчанию. Сам TCP listener Agent привязан к сетевым интерфейсам сервера; фильтрацию входящих подключений выполняет UFW.
+- Локальный Agent, устанавливаемый вместе с Hub, работает по WebSocket и не открывает SSH listener.
 
 ## Обновление и удаление
 
-Действие `update` загружает актуальные образы Beszel и пересоздаёт управляемые контейнеры.
+Пункт `Обновить образы Beszel` загружает актуальные образы и пересоздаёт управляемые контейнеры. Пункт `Обновить скрипт` получает последнюю версию ветки `master` репозитория GitHub и перезапускает меню с обновлёнными файлами. Конфигурация Hub и Agent хранится отдельно и при обновлении скрипта не меняется.
 
 Перед удалением сохраните нужные данные Hub или Agent отдельно. Действие `remove` удаляет контейнер, связанные с ним образы и тома Docker, а также локальную конфигурацию компонента. Данные из удалённого тома нельзя восстановить без резервной копии.
 

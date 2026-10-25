@@ -26,6 +26,23 @@ beszel_ufw_allow_tcp() {
     ufw allow "${port}/tcp" comment "$comment" >/dev/null 2>&1
 }
 
+beszel_ufw_allow_tcp_from() {
+    local port="${1:-}" source_ip="${2:-}" comment="${3:-Beszel Agent}"
+    [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || return 1
+    [ -n "$source_ip" ] || return 1
+    command -v ufw >/dev/null 2>&1 || return 2
+    [ "$(ufw status 2>/dev/null | sed -n '1p')" = "Status: active" ] || return 2
+    ufw insert 1 allow from "$source_ip" to any port "$port" proto tcp comment "$comment" >/dev/null 2>&1
+}
+
+beszel_ufw_deny_tcp() {
+    local port="${1:-}" comment="${2:-Beszel Agent deny}"
+    [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || return 1
+    command -v ufw >/dev/null 2>&1 || return 2
+    [ "$(ufw status 2>/dev/null | sed -n '1p')" = "Status: active" ] || return 2
+    ufw insert 1 deny "${port}/tcp" comment "$comment" >/dev/null 2>&1
+}
+
 beszel_ufw_remove_rules_by_comment() {
     local comment="${1:-}" port="${2:-}" status number
     [ -n "$comment" ] || return 1
@@ -43,6 +60,34 @@ beszel_ufw_remove_rules_by_comment() {
         ufw status numbered 2>/dev/null | awk -v marker="# ${comment}" -v rule="${port:+${port}/tcp}" '
             index($0, marker) && (!rule || index($0, rule)) {
                 if (match($0, /^\[[[:space:]]*[0-9]+\]/)) {
+                    number=substr($0, RSTART, RLENGTH)
+                    gsub(/[^0-9]/, "", number)
+                    print number
+                }
+            }
+        ' | sort -rn
+    )
+}
+
+beszel_ufw_remove_open_tcp_rules_by_comment() {
+    local comment="${1:-}" port="${2:-}" status number
+    [ -n "$comment" ] || return 1
+    [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || return 1
+    command -v ufw >/dev/null 2>&1 || return 0
+    status=$(ufw status 2>/dev/null | sed -n '1p')
+    [ "$status" = "Status: active" ] || return 0
+
+    while IFS= read -r number; do
+        [ -n "$number" ] || continue
+        printf 'y\n' | ufw delete "$number" >/dev/null 2>&1 || return 1
+    done < <(
+        ufw status numbered 2>/dev/null | awk -v marker="# ${comment}" -v port="$port" '
+            index($0, marker) {
+                line=$0
+                sub(/^\[[[:space:]]*[0-9]+\][[:space:]]*/, "", line)
+                if (line ~ ("^" port "(/tcp)?([[:space:]]|$)") &&
+                    line ~ /ALLOW IN[[:space:]]+Anywhere([[:space:]]|$)/ &&
+                    match($0, /^\[[[:space:]]*[0-9]+\]/)) {
                     number=substr($0, RSTART, RLENGTH)
                     gsub(/[^0-9]/, "", number)
                     print number
