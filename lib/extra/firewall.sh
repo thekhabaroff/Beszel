@@ -112,18 +112,13 @@ beszel_detect_sshd_port() {
 
 ufw_ensure_ssh_allow_with_comment() {
     command -v ufw >/dev/null 2>&1 || return 0
-    local sshd_port line number i
-    local -a numbers=()
+    local sshd_port line
     sshd_port=$(beszel_detect_sshd_port)
     while IFS= read -r line; do
         printf '%s\n' "$line" | grep -Eq "\\][[:space:]]+${sshd_port}(/tcp|[[:space:]]+TCP)([[:space:]]|$)" || continue
-        printf '%s\n' "$line" | grep -qi ALLOW || continue
-        number=$(printf '%s\n' "$line" | grep -oP '^\[\s*\K\d+(?=\])' 2>/dev/null || true)
-        [ -n "$number" ] && numbers+=("$number")
+        printf '%s\n' "$line" | grep -q 'ALLOW IN' || continue
+        return 0
     done < <(ufw status numbered 2>/dev/null | grep '^\[' || true)
-    for ((i=${#numbers[@]}-1; i>=0; i--)); do
-        printf 'y\n' | ufw delete "${numbers[$i]}" >/dev/null 2>&1 || true
-    done
-    ufw allow "${sshd_port}/tcp" comment SSH >/dev/null 2>&1 || true
+    ufw insert 1 allow "${sshd_port}/tcp" comment SSH >/dev/null 2>&1 || return 1
     ufw reload >/dev/null 2>&1 || true
 }

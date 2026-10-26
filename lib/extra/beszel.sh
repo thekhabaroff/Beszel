@@ -942,7 +942,7 @@ _beszel_update_script_from_github() {
         rm -rf "$temp_dir"
         return 1
     fi
-    cp -an "${repo_dir}/." "$source_dir/" || {
+    cp -a --update=none "${repo_dir}/." "$source_dir/" || {
         rm -rf "$temp_dir"
         return 1
     }
@@ -1032,11 +1032,17 @@ manage_beszel() {
         fi
 
         items+=("──────────────────────────────────────"); actions+=("sep")
-        items+=("⬅️   Назад");                             actions+=("back")
+        items+=("🔥  UFW - Firewall");                    actions+=("firewall")
+        items+=("⚙️   Оптимизация сервера");               actions+=("server_optimization")
+        items+=("⚡  Тест скорости сети");                 actions+=("speed_test")
+        items+=("🌐  Сетевая диагностика");               actions+=("network_diagnostics")
+        items+=("──────────────────────────────────────"); actions+=("sep")
+        items+=("⬅️   Выход");                             actions+=("back")
 
+        local choice action
         show_arrow_menu "📊 Мониторинг Beszel" "${items[@]}"
-        local choice=$?
-        local action="${actions[$choice]:-back}"
+        choice=$?
+        action="${actions[$choice]:-back}"
 
         case "$action" in
             install_hub)       install_beszel ;;
@@ -1051,7 +1057,18 @@ manage_beszel() {
                 ;;
             update_script) _beszel_do_script_update ;;
             delete)            manage_delete_components beszel ;;
-            *) return 0 ;;
+            firewall)          manage_beszel_ufw ;;
+            server_optimization) manage_beszel_server_optimization ;;
+            speed_test)        run_beszel_speed_test ;;
+            network_diagnostics) run_beszel_network_diagnostics ;;
+            back)
+                clear 2>/dev/null || true
+                return 0
+                ;;
+            *)
+                clear 2>/dev/null || true
+                return 0
+                ;;
         esac
     done
 }

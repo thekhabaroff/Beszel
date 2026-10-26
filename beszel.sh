@@ -27,6 +27,10 @@ source "${_beszel_lib}/install/domain.sh"
 source "${_beszel_lib}/install/certificates.sh"
 source "${_beszel_lib}/install/proxy_environment.sh"
 source "${_beszel_lib}/extra/beszel.sh"
+source "${_beszel_lib}/extra/ufw_manager.sh"
+source "${_beszel_lib}/extra/network_speedtest.sh"
+source "${_beszel_lib}/extra/network_diagnostics.sh"
+source "${_beszel_lib}/extra/server_optimization.sh"
 
 check_root() {
     if [ "$(id -u)" -ne 0 ]; then
@@ -207,6 +211,10 @@ Beszel Manager
 Использование:
   beszel                         Открыть интерактивное меню
   beszel status                  Показать состояние Hub и Agent
+  beszel firewall                Открыть управление UFW
+  beszel speedtest               Проверить скорость сети
+  beszel geolocation             Проверить геолокацию IP
+  beszel services                Проверить доступность популярных сервисов
   beszel hub <действие>          Управление Hub
   beszel agent <действие>        Управление Agent
 
@@ -219,6 +227,26 @@ _beszel_main() {
         -h|--help|help) _beszel_help ;;
         -v|--version|version) printf 'Beszel Manager %s\n' "$BESZEL_VERSION" ;;
         status) _beszel_status "${2:-all}" ;;
+        firewall)
+            check_root
+            check_os
+            manage_beszel_ufw
+            ;;
+        speedtest)
+            check_root
+            check_os
+            run_beszel_speed_test
+            ;;
+        geolocation|geo)
+            check_root
+            check_os
+            run_beszel_geolocation
+            ;;
+        services)
+            check_root
+            check_os
+            run_beszel_services_check
+            ;;
         hub|agent)
             [ "$#" -ge 2 ] || { printf 'Укажите действие для %s.\n' "$1" >&2; return 2; }
             _beszel_compose_action "$1" "$2"
