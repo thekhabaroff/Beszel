@@ -525,8 +525,7 @@ beszel_proxy_nginx_issue_certificate() {
         sh "$installer" email="$email" >/dev/null 2>&1 || { rm -f "$installer"; return 1; }
         rm -f "$installer"
     fi
-    if command -v ufw >/dev/null 2>&1 && \
-       [ "$(ufw status 2>/dev/null | sed -n '1p')" = "Status: active" ] && \
+    if command -v ufw >/dev/null 2>&1 && _beszel_ufw_is_active && \
        ! beszel_ufw_has_allow_tcp 8443; then
         beszel_ufw_allow_tcp 8443 "Beszel ACME TLS-ALPN" || return 1
         _ufw_rule_added=true

@@ -631,7 +631,7 @@ _beszel_setup_firewall() {
         [[ "$_agent_port" =~ ^[0-9]+$ ]] && [ "$_agent_port" -ge 1 ] && [ "$_agent_port" -le 65535 ] || return 1
         [ "${#_hub_ips[@]}" -gt 0 ] || return 1
         command -v ufw >/dev/null 2>&1 || return 2
-        [ "$(ufw status 2>/dev/null | sed -n '1p')" = "Status: active" ] || return 2
+        _beszel_ufw_is_active || return 2
 
         # Убираем правила этой и предыдущих версий, затем добавляем разрешения от IP Hub.
         beszel_ufw_remove_rules_by_comment "BESZEL" "$_agent_port" || return 1
@@ -646,10 +646,8 @@ _beszel_setup_firewall() {
         shift || true
     fi
     local -a _extra_ports=("$@")
-    local _ufw_status
     command -v ufw >/dev/null 2>&1 || return 0
-    _ufw_status=$(ufw status 2>/dev/null | sed -n '1p')
-    [ "$_ufw_status" = "Status: active" ] || return 0
+    _beszel_ufw_is_active || return 0
 
     # Локальный Agent на Hub работает через WebSocket и не нуждается в
     # глобально открытом SSH-порту, который создавали старые версии.

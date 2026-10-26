@@ -68,11 +68,11 @@ _http01_start_nginx() {
 
 _http01_ufw_is_active() {
     command -v ufw >/dev/null 2>&1 || return 1
-    ufw status 2>/dev/null | head -1 | grep -Eqi '^Status:[[:space:]]+active([[:space:]]|$)'
+    LC_ALL=C ufw status 2>/dev/null | head -1 | grep -Eqi '^Status:[[:space:]]+active([[:space:]]|$)'
 }
 
 _http01_ufw_has_allow() {
-    ufw status numbered 2>/dev/null | grep -Eqi \
+    LC_ALL=C ufw status numbered 2>/dev/null | grep -Eqi \
         '80(/tcp|[[:space:]]+TCP)([[:space:]]|$).*ALLOW'
 }
 
@@ -106,7 +106,7 @@ _http01_close_firewall() {
             printf '%s\n' "$line" | grep -qF 'beszel-certbot-http01' || continue
             number=$(printf '%s\n' "$line" | grep -oP '^\[\s*\K\d+(?=\])' 2>/dev/null || true)
             [ -n "$number" ] && numbers+=("$number")
-        done < <(ufw status numbered 2>/dev/null || true)
+        done < <(LC_ALL=C ufw status numbered 2>/dev/null || true)
         local i
         for ((i=${#numbers[@]}-1; i>=0; i--)); do
             printf 'y\n' | ufw delete "${numbers[$i]}" >/dev/null 2>&1 || true
