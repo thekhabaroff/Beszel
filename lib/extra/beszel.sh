@@ -201,7 +201,7 @@ _beszel_update_agent_hub_url() {
 
 _beszel_write_agent_compose() {
     local port="${1:-}" key="${2:-}" token="${3:-}" hub_url="${4:-}" system_name="${5:-}" disable_ssh="${6:-false}"
-    local key_value token_value url_value name_line disable_ssh_line saved_umask rc compose_tmp
+    local key_value token_value url_value name_line disable_ssh_line systemd_private_mount apparmor_security_opt saved_umask rc compose_tmp
     [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || return 1
     [ -n "$key" ] && [ -n "$token" ] || return 1
     hub_url=$(_beszel_normalize_hub_url "$hub_url") || return 1
@@ -215,6 +215,16 @@ _beszel_write_agent_compose() {
     disable_ssh_line=""
     if [ "$disable_ssh" = "true" ]; then
         disable_ssh_line='      DISABLE_SSH: "true"'
+    fi
+    systemd_private_mount=""
+    if [ -S /var/run/systemd/private ]; then
+        systemd_private_mount='      - /var/run/systemd/private:/var/run/systemd/private:ro'
+    fi
+    apparmor_security_opt=""
+    if [ -r /sys/module/apparmor/parameters/enabled ] && \
+       [ "$(tr -d '[:space:]' </sys/module/apparmor/parameters/enabled 2>/dev/null)" = Y ]; then
+        apparmor_security_opt='    security_opt:
+      - apparmor:unconfined'
     fi
 
     saved_umask=$(umask)
@@ -243,11 +253,13 @@ services:
     labels:
       - com.beszel.managed=true
       - com.beszel.component=beszel-agent
+${apparmor_security_opt}
     network_mode: host
     volumes:
       - beszel-agent-data:/var/lib/beszel-agent
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
+${systemd_private_mount}
     environment:
       LISTEN: "${port}"
       KEY: ${key_value}
